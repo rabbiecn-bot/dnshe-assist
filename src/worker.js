@@ -397,14 +397,17 @@ async function handleAssist(request, env, cors) {
       }
       const raw = await env.ASSIST_KV.get('assist:history');
       let history = raw ? JSON.parse(raw) : [];
-      // 同码去重：旧的按账号逐条记录（account/message 格式）也一并清理
-      history = history.filter(h => h.assist_code !== assistCode);
+      const codeUpper = assistCode.toUpperCase();
+      // 同码去重：若已存在历史记录则累计 count（保留旧 ts/domain/account，缺失时补新值）
+      const oldEntries = history.filter(h => (h.assist_code || '').toString().toUpperCase() === codeUpper);
+      const oldCount = oldEntries.reduce((s, h) => s + (Number(h.count) || 0), 0);
+      history = history.filter(h => (h.assist_code || '').toString().toUpperCase() !== codeUpper);
       history.push({
         ts: new Date().toISOString(),
         assist_code: assistCode,
-        domain: domainMasked,
-        account: accountMasked,
-        count: totalSuccess,
+        domain: domainMasked || (oldEntries[0] && oldEntries[0].domain) || '',
+        account: accountMasked || (oldEntries[0] && oldEntries[0].account) || '',
+        count: oldCount + totalSuccess,
       });
       await env.ASSIST_KV.put('assist:history', JSON.stringify(history.slice(-200)));
 
@@ -448,16 +451,18 @@ async function updateCacheAfterAssist(env, results, assistCode, totalSuccess, do
       if (acc.helper_assist_remaining <= 0) acc.helper_limit_reached = true;
     }
 
-    // 2. 助力记录：同码去重、合并、时间倒序置顶
+    // 2. 助力记录：同码去重、合并、时间倒序置顶（count 取历史累计 + 本次成功数）
     const codeUpper = assistCode.toUpperCase();
-    const hist = (Array.isArray(snapshot.assist_history) ? snapshot.assist_history : [])
-      .filter(h => (h.assist_code || '').toUpperCase() !== codeUpper);
+    const snapshotHist = Array.isArray(snapshot.assist_history) ? snapshot.assist_history : [];
+    const oldEntries = snapshotHist.filter(h => (h.assist_code || '').toUpperCase() === codeUpper);
+    const oldCount = oldEntries.reduce((s, h) => s + (Number(h.count) || 0), 0);
+    const hist = snapshotHist.filter(h => (h.assist_code || '').toUpperCase() !== codeUpper);
     hist.push({
       ts: new Date().toISOString(),
       assist_code: assistCode,
-      domain: domainMasked,
-      account: accountMasked,
-      count: totalSuccess,
+      domain: domainMasked || (oldEntries[0] && oldEntries[0].domain) || '',
+      account: accountMasked || (oldEntries[0] && oldEntries[0].account) || '',
+      count: oldCount + totalSuccess,
     });
     hist.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
     snapshot.assist_history = hist.slice(0, 200);
