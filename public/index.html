@@ -32,6 +32,11 @@
   .btn.green { background: #66bb6a; color: #fff; }
   .btn.green:hover { background: #81c784; }
   .btn.small { padding: 4px 10px; font-size: 12px; }
+  .btn.outline {
+    background: transparent; color: #4fc3f7; border: 1px solid #4fc3f7;
+  }
+  .btn.outline:hover { background: rgba(79,195,247,0.1); color: #81d4fa; }
+  .hdr-actions { display: flex; gap: 8px; }
 
   .card {
     background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
@@ -40,7 +45,6 @@
   }
   .card h2 { font-size: 16px; margin-bottom: 14px; color: #4fc3f7; }
 
-  /* 账号总览 */
   .summary { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
   .stat {
     background: rgba(255,255,255,0.06); border-radius: 10px; padding: 12px 18px;
@@ -49,7 +53,6 @@
   .stat .num { font-size: 26px; font-weight: 700; color: #4fc3f7; }
   .stat .label { font-size: 12px; color: #aaa; margin-top: 4px; }
 
-  /* 账号表格 */
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
   th { color: #aaa; font-weight: 500; font-size: 12px; }
@@ -64,23 +67,26 @@
   .bar { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; margin-top: 6px; }
   .bar > div { height: 100%; background: linear-gradient(90deg, #4fc3f7, #66bb6a); border-radius: 3px; }
 
-  /* 域名卡片 */
   .domain-group { margin-bottom: 14px; }
   .domain-group .g-title { font-size: 13px; color: #4fc3f7; margin-bottom: 8px; font-weight: 600; }
-  .domain-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+  .domain-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
   .domain-item {
     background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
     border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px;
   }
   .domain-item .d-name { font-weight: 600; font-size: 13px; word-break: break-all; }
-  .domain-item .d-meta { font-size: 11px; color: #aaa; }
+  .domain-item .d-meta { font-size: 11px; color: #aaa; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .domain-item .d-code {
     font-family: monospace; background: rgba(79,195,247,0.12); color: #4fc3f7;
     padding: 3px 8px; border-radius: 6px; font-size: 13px; letter-spacing: 1px;
   }
   .domain-item .d-actions { display: flex; gap: 6px; align-items: center; }
+  .expiry {
+    font-size: 11px; color: #ffb74d; background: rgba(255,167,38,0.12);
+    padding: 2px 8px; border-radius: 12px;
+  }
+  .expiry.permanent { color: #81c784; background: rgba(102,187,106,0.12); }
 
-  /* 助力表单 */
   .assist-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   .assist-form input[type=text] {
     flex: 1; min-width: 200px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
@@ -93,7 +99,6 @@
   }
   .assist-form input:focus { outline: none; border-color: #4fc3f7; }
 
-  /* 结果 */
   .result-item {
     display: flex; justify-content: space-between; align-items: center;
     padding: 8px 12px; border-radius: 8px; margin-top: 8px; font-size: 13px;
@@ -103,7 +108,6 @@
   .result-item.fail { border-left: 3px solid #ef5350; }
   .result-item .r-msg { color: #ccc; font-size: 12px; }
 
-  /* 历史 */
   .history-item {
     display: flex; justify-content: space-between; padding: 8px 12px;
     border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px;
@@ -114,6 +118,9 @@
   .error-box {
     background: rgba(239,83,80,0.15); border: 1px solid rgba(239,83,80,0.3);
     color: #ef9a9a; padding: 12px 16px; border-radius: 10px; margin: 12px 0; font-size: 13px;
+  }
+  .cache-note {
+    font-size: 12px; color: #888; margin-left: 8px;
   }
   .toast {
     position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 10px;
@@ -131,7 +138,10 @@
 <div class="container">
   <header>
     <h1>DNSHE <span>助力助手</span></h1>
-    <button class="btn" onclick="loadAll()" id="refreshBtn">🔄 刷新</button>
+    <div class="hdr-actions">
+      <button class="btn outline" onclick="syncDnshe()" id="syncBtn">🔄 同步 DNSHE</button>
+      <button class="btn" onclick="loadAll()" id="refreshBtn">刷新</button>
+    </div>
   </header>
 
   <div id="summaryArea"></div>
@@ -139,7 +149,7 @@
     <div class="loading">加载中...</div>
   </div>
 
-  <footer>DNSHE Assist · 永久升级助力工具</footer>
+  <footer>DNSHE Assist · 永久升级助力工具 · 读 KV 缓存，写操作直连 DNSHE</footer>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -164,22 +174,53 @@ async function api(path, opts = {}) {
   return j;
 }
 
+/** 刷新：读 KV 缓存（0 DNSHE 请求） */
 async function loadAll() {
   const btn = document.getElementById('refreshBtn');
   btn.disabled = true;
-  btn.textContent = '🔄 刷新中...';
+  btn.textContent = '刷新中...';
   try {
     data = await api('/api/status');
-    renderSummary(data);
-    renderAccounts(data);
-    renderDomains(data);
-    renderHistory(data);
+    renderAll(data);
   } catch (e) {
     document.getElementById('contentArea').innerHTML =
       `<div class="error-box">加载失败：${escapeHtml(e.message)}</div>`;
   } finally {
     btn.disabled = false;
-    btn.textContent = '🔄 刷新';
+    btn.textContent = '刷新';
+  }
+}
+
+/** 同步：从 DNSHE 权威拉取并覆盖缓存（带确认框） */
+async function syncDnshe() {
+  if (!confirm('将从 DNSHE 权威拉取最新数据并覆盖缓存（每个账号 2 次请求），确定同步？')) return;
+  const btn = document.getElementById('syncBtn');
+  btn.disabled = true;
+  btn.textContent = '同步中...';
+  try {
+    const j = await api('/api/sync', { method: 'POST' });
+    data = j;
+    renderAll(j);
+    showToast('同步成功，已从 DNSHE 拉取最新数据', 'ok');
+  } catch (e) {
+    showToast('同步失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 同步 DNSHE';
+  }
+}
+
+function renderAll(d) {
+  renderSummary(d);
+  renderAccounts(d);
+  renderDomains(d);
+  renderHistory(d);
+  // 缓存时间提示
+  if (d.updated_at) {
+    const note = document.createElement('div');
+    note.className = 'cache-note';
+    note.textContent = `数据来自 ${d.cached ? 'KV 缓存' : 'DNSHE 权威'}，更新于 ${new Date(d.updated_at).toLocaleString('zh-CN')}`;
+    document.getElementById('summaryArea').appendChild(note);
   }
 }
 
@@ -193,8 +234,8 @@ function renderSummary(d) {
   const accs = d.accounts || [];
   const totalRemaining = accs.reduce((s, a) => s + (a.helper_assist_remaining || 0), 0);
   const totalLimit = accs.reduce((s, a) => s + (a.helper_assist_limit || 0), 0);
-  const domains = accs.reduce((s, a) => s + ((a.eligible_domains || []).length + (a.requests || []).length), 0);
-  const upgraded = accs.reduce((s, a) => s + (a.requests || []).filter(r => r.status === 'upgraded').length, 0);
+  const domains = accs.reduce((s, a) => s + ((a.domains || []).length), 0);
+  const upgraded = accs.reduce((s, a) => s + (a.domains || []).filter(dm => dm.status === 'upgraded').length, 0);
 
   document.getElementById('summaryArea').innerHTML = `
     <div class="summary">
@@ -235,35 +276,20 @@ function renderAccounts(d) {
 
 function renderDomains(d) {
   const accs = (d.accounts || []).filter(a => !a.error);
-  const groups = accs.map(a => {
-    // 合并可升级域名和已有任务的域名
-    const eligible = (a.eligible_domains || []).filter(el =>
-      !(a.requests || []).some(r => r.domain === el.domain));
-    const requests = a.requests || [];
-
-    const items = [
-      ...eligible.map(el => ({
-        domain: el.domain,
-        status: 'eligible',
-        code: '',
-        count: 0,
-        target: a.assist_required || 5,
-        subdomain_id: el.id,
-        account: a.name,
-      })),
-      ...requests.map(r => ({
-        domain: r.domain,
-        status: r.status,
-        code: r.assist_code || '',
-        count: r.assist_count || 0,
-        target: r.target_assists || 5,
-        subdomain_id: r.id,
-        account: a.name,
-      })),
-    ];
-
-    return { name: a.name, items };
-  }).filter(g => g.items.length > 0);
+  const groups = accs.map(a => ({
+    name: a.name,
+    items: (a.domains || []).map(dm => ({
+      domain: dm.domain,
+      status: dm.status,
+      code: dm.assist_code || '',
+      count: dm.assist_count || 0,
+      target: dm.target_assists || 5,
+      subdomain_id: dm.id,
+      account: a.name,
+      never_expires: dm.never_expires,
+      expires_at: dm.expires_at,
+    })),
+  })).filter(g => g.items.length > 0);
 
   if (groups.length === 0) return;
 
@@ -289,22 +315,31 @@ function renderDomains(d) {
 }
 
 function renderDomainItem(it) {
-  let pill, codeHtml, actionHtml = '';
+  let pill, codeHtml = '', actionHtml = '', expiryHtml = '';
+
+  // 到期时间
+  if (it.never_expires === 1 || it.status === 'upgraded') {
+    expiryHtml = '<span class="expiry permanent">♾️ 永久</span>';
+  } else if (it.expires_at) {
+    const exp = new Date(it.expires_at.replace(' ', 'T'));
+    const days = Math.ceil((exp - Date.now()) / 86400000);
+    expiryHtml = `<span class="expiry ${days < 30 ? '' : ''}">📅 ${it.expires_at.slice(0, 10)}${days >= 0 ? `（${days} 天）` : ''}</span>`;
+  }
+
   if (it.status === 'upgraded') {
     pill = '<span class="pill ok">✅ 永久</span>';
-  } else if (it.status === 'pending' || it.status === 'active' || it.status === 'processing' || it.status === 'in_progress') {
+  } else if (it.code) {
+    // 有助力码 = 升级中
     pill = `<span class="pill warn">升级中 ${it.count}/${it.target}</span>`;
-    codeHtml = it.code ? `<div class="d-code">${it.code}</div>` : '';
-  } else if (it.status === 'eligible') {
+    codeHtml = `<div class="d-code">${escapeHtml(it.code)}</div>`;
+  } else {
     pill = '<span class="pill info">可升级</span>';
     actionHtml = `<button class="btn small green" onclick="createCode('${escapeHtml(it.account)}', ${it.subdomain_id}, this)">生成助力码</button>`;
-  } else {
-    pill = `<span class="pill warn">${escapeHtml(it.status)}</span>`;
   }
 
   return `<div class="domain-item">
     <div class="d-name">${escapeHtml(it.domain)}</div>
-    <div class="d-meta">${pill}</div>
+    <div class="d-meta">${pill} ${expiryHtml}</div>
     ${codeHtml || ''}
     <div class="d-actions">${actionHtml}</div>
   </div>`;
@@ -319,7 +354,7 @@ async function createCode(account, subdomainId, btn) {
       body: JSON.stringify({ account, subdomain_id: subdomainId }),
     });
     showToast(j.message || '助力码生成成功', 'ok');
-    setTimeout(loadAll, 800);
+    setTimeout(loadAll, 1500);
   } catch (e) {
     showToast('生成失败：' + e.message, 'err');
     btn.disabled = false;

@@ -72,3 +72,28 @@ export async function getUpgradeState(account) {
   }
   return { error: data && data.message ? data.message : `HTTP ${status}` };
 }
+
+/**
+ * 查询账号下的所有子域名（含到期时间）
+ * @returns {Promise<{subdomains: Array, error?: string}>}
+ */
+export async function getSubdomains(account) {
+  const { status, data } = await callDnshe(account, 'subdomains', 'list');
+  if (status === 200 && data && data.success) {
+    const subs = data.data?.subdomains || data.subdomains || [];
+    return {
+      subdomains: subs.map(s => ({
+        id: s.id,
+        subdomain: s.subdomain,
+        rootdomain: s.rootdomain,
+        full_domain: s.full_domain || (s.subdomain ? `${s.subdomain}.${s.rootdomain}` : ''),
+        status: s.status,
+        expires_at: s.expires_at,
+        never_expires: s.never_expires,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+      })),
+    };
+  }
+  return { subdomains: [], error: data && data.message ? data.message : `HTTP ${status}` };
+}

@@ -1,12 +1,20 @@
 /**
  * DNSHE 助力助手 Worker 入口
+ *
+ * 缓存架构（同 dnsmanage A 方案）：
+ *   - KV 是读取缓存，前端 /api/status 纯 KV 读取（0 次 DNSHE 请求）
+ *   - /api/sync 一键同步：从 DNSHE 权威拉取全量数据覆盖 KV 缓存
+ *   - create / assist 写操作直连 DNSHE（有需要才发请求），成功后刷新缓存
+ *
  * 路由：
- *   GET  /api/status  — 所有账号状态（剩余助力次数、域名列表、助力码、助力记录）
- *   POST /api/create  — 为指定域名生成助力码（创建永久升级任务）
- *   POST /api/assist  — 用助力码触发助力（依次使用多个账号）
- * 其余请求由 static assets（public/）处理
+ *   GET  /api/status  — 读 KV 缓存（无缓存自动 sync）
+ *   POST /api/sync    — 从 DNSHE 权威拉取全量数据写 KV（含账号额度、域名、到期）
+ *   POST /api/create  — 为指定域名生成助力码（直连 DNSHE）
+ *   POST /api/assist  — 用助力码触发助力（直连 DNSHE）
  */
-import { getAccounts, getUpgradeState, callDnshe } from './dnshe.js';
+import { getAccounts, getUpgradeState, getSubdomains, callDnshe } from './dnshe.js';
+
+const CACHE_KEY = 'status:cache';
 
 export default {
   async fetch(request, env) {
@@ -14,7 +22,6 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
-    // CORS（同源部署可留空；跨域需要时放开）
     const cors = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
@@ -27,6 +34,9 @@ export default {
     if (path === '/api/status' && method === 'GET') {
       return handleStatus(env, cors);
     }
+    if (path === '/api/sync' && method === 'POST') {
+      return handleSync(env, cors);
+    }
     if (path === '/api/create' && method === 'POST') {
       return handleCreate(request, env, cors);
     }
@@ -34,7 +44,6 @@ export default {
       return handleAssist(request, env, cors);
     }
 
-    // 其余交给 static assets
     return env.ASSETS.fetch(request);
   },
 };
@@ -46,16 +55,73 @@ function json(data, status = 200, cors = {}) {
   });
 }
 
-/** GET /api/status */
-async function handleStatus(env, cors) {
+/* ==================== KV 缓存读写 ==================== */
+
+async function readCache(env) {
+  if (!env.ASSIST_KV) return null;
+  try {
+    const raw = await env.ASSIST_KV.get(CACHE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    console.error('KV cache read error:', e.message);
+    return null;
+  }
+}
+
+async function writeCache(env, snapshot) {
+  if (!env.ASSIST_KV) return;
+  try {
+    await env.ASSIST_KV.put(CACHE_KEY, JSON.stringify(snapshot));
+  } catch (e) {
+    console.error('KV cache write error:', e.message);
+  }
+}
+
+/* ==================== 权威数据拉取（sync） ==================== */
+
+/**
+ * 从 DNSHE 拉取所有账号全量状态：额度 + 域名列表（含到期）+ 助力任务 + 助力记录
+ * 每个账号 2 次请求（permanent_upgrade list + subdomains list），6 账号 ≈ 12 次
+ */
+async function fetchAllAccounts(env) {
   const accounts = getAccounts(env);
   if (accounts.length === 0) {
-    return json({ success: false, error: 'DNSHE_ACCOUNTS 环境变量未配置' }, 500, cors);
+    return { ok: false, error: 'DNSHE_ACCOUNTS 环境变量未配置' };
   }
 
   const results = await Promise.all(accounts.map(async (acct) => {
     const state = await getUpgradeState(acct);
-    if (state.error) return { name: acct.name, error: state.error };
+    if (state.error) {
+      return { name: acct.name, error: state.error };
+    }
+
+    // 域名列表（subdomains，含到期时间）
+    const { subdomains, error: subError } = await getSubdomains(acct);
+    if (subError) {
+      return { name: acct.name, error: `额度 OK，但域名列表失败: ${subError}` };
+    }
+
+    // 合并：requests 里的域名标记升级状态/助力码；未在 requests 且未永久的标记可升级
+    const reqMap = {};
+    (state.requests || []).forEach(r => { reqMap[r.domain || r.subdomain] = r; });
+
+    const domains = subdomains.map(s => {
+      const req = reqMap[s.full_domain];
+      const isUpgraded = s.never_expires === 1 || s.status === '永久' || s.status === 'Permanent';
+      return {
+        id: s.id,
+        domain: s.full_domain,
+        status: isUpgraded ? 'upgraded' : 'eligible',
+        never_expires: s.never_expires,
+        expires_at: s.expires_at,
+        created_at: s.created_at,
+        // 有升级任务时补充
+        assist_code: req ? (req.assist_code || '') : '',
+        assist_count: req ? (req.assist_count || 0) : 0,
+        target_assists: req ? (req.target_assists || 5) : 5,
+        request_status: req ? (req.status || '') : '',
+      };
+    });
 
     return {
       name: acct.name,
@@ -64,13 +130,7 @@ async function handleStatus(env, cors) {
       helper_assist_count: state.helper_assist_count ?? 0,
       helper_assist_remaining: state.helper_assist_remaining ?? 0,
       helper_limit_reached: state.helper_limit_reached ?? false,
-      // 可升级域名（未永久，可生成助力码）
-      eligible_domains: (state.eligible_domains || []).map(d => ({
-        id: d.id,
-        domain: d.domain,
-        status: d.status,
-      })),
-      // 全部已创建任务的域名
+      domains,
       requests: (state.requests || []).map(r => ({
         id: r.id,
         domain: r.domain,
@@ -92,7 +152,7 @@ async function handleStatus(env, cors) {
     };
   }));
 
-  // 读取本地助力历史（KV）
+  // 读助力历史（KV 持久）
   let assist_history = [];
   if (env.ASSIST_KV) {
     try {
@@ -101,15 +161,41 @@ async function handleStatus(env, cors) {
     } catch (e) { console.error('KV read error:', e.message); }
   }
 
-  return json({
-    success: true,
+  return {
+    ok: true,
     updated_at: new Date().toISOString(),
     accounts: results,
     assist_history,
-  }, 200, cors);
+  };
 }
 
-/** POST /api/create — 为域名生成助力码 */
+/* ==================== 路由处理 ==================== */
+
+/** GET /api/status — 纯 KV 读取，0 次 DNSHE 请求 */
+async function handleStatus(env, cors) {
+  let snapshot = await readCache(env);
+  if (!snapshot) {
+    // 首次无缓存 → 自动同步一次
+    snapshot = await fetchAllAccounts(env);
+    if (snapshot.ok) await writeCache(env, snapshot);
+  }
+  if (!snapshot || !snapshot.ok) {
+    return json({ success: false, error: (snapshot && snapshot.error) || '缓存为空且同步失败' }, 500, cors);
+  }
+  return json({ success: true, cached: true, ...snapshot }, 200, cors);
+}
+
+/** POST /api/sync — 从 DNSHE 权威拉取全量覆盖缓存 */
+async function handleSync(env, cors) {
+  const snapshot = await fetchAllAccounts(env);
+  if (!snapshot.ok) {
+    return json({ success: false, error: snapshot.error }, 502, cors);
+  }
+  await writeCache(env, snapshot);
+  return json({ success: true, cached: false, ...snapshot }, 200, cors);
+}
+
+/** POST /api/create — 为域名生成助力码（直连 DNSHE，成功后刷新缓存） */
 async function handleCreate(request, env, cors) {
   const accounts = getAccounts(env);
   if (accounts.length === 0) {
@@ -134,6 +220,8 @@ async function handleCreate(request, env, cors) {
 
   const { status, data } = await callDnshe(acct, 'permanent_upgrade', 'create', null, { subdomain_id: subdomainId });
   if (status === 200 && data && data.success) {
+    // 创建成功 → 后台刷新缓存（不阻塞响应）
+    refreshCache(env);
     return json({
       success: true,
       account: accountName,
@@ -147,7 +235,7 @@ async function handleCreate(request, env, cors) {
   }, 502, cors);
 }
 
-/** POST /api/assist — 用助力码触发助力 */
+/** POST /api/assist — 用助力码触发助力（直连 DNSHE，成功后刷新缓存） */
 async function handleAssist(request, env, cors) {
   const accounts = getAccounts(env);
   if (accounts.length === 0) {
@@ -227,6 +315,9 @@ async function handleAssist(request, env, cors) {
     await new Promise(r => setTimeout(r, 300));
   }
 
+  // 助力结束 → 刷新缓存
+  refreshCache(env);
+
   return json({
     success: totalSuccess > 0,
     assist_code: assistCode,
@@ -234,4 +325,14 @@ async function handleAssist(request, env, cors) {
     max_accounts: maxAccounts,
     results,
   }, 200, cors);
+}
+
+/** 后台刷新 KV 缓存（不阻塞响应） */
+async function refreshCache(env) {
+  try {
+    const snapshot = await fetchAllAccounts(env);
+    if (snapshot.ok) await writeCache(env, snapshot);
+  } catch (e) {
+    console.error('cache refresh error:', e.message);
+  }
 }
