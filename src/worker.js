@@ -193,12 +193,24 @@ async function handleStatus(env, cors) {
   return json({ success: true, cached: true, ...snapshot }, 200, cors);
 }
 
-/** POST /api/sync — 从 DNSHE 权威拉取全量覆盖缓存 */
+/** POST /api/sync — 从 DNSHE 权威拉取全量覆盖缓存（部分失败时保留旧数据） */
 async function handleSync(env, cors) {
   const snapshot = await fetchAllAccounts(env);
   if (!snapshot.ok) {
     return json({ success: false, error: snapshot.error }, 502, cors);
   }
+
+  // 有账号失败的 sync：合并旧缓存数据，避免 KV 被错误覆盖
+  const failed = snapshot.accounts.filter(a => a.error);
+  if (failed.length > 0) {
+    const old = await readCache(env);
+    if (old && old.accounts) {
+      snapshot.accounts = snapshot.accounts.map(a =>
+        a.error ? (old.accounts.find(o => o.name === a.name) || a) : a);
+      snapshot.partial = true;
+    }
+  }
+
   await writeCache(env, snapshot);
   return json({ success: true, cached: false, ...snapshot }, 200, cors);
 }
