@@ -498,7 +498,8 @@ function renderHistory(d) {
       <div class="card"><h2>📜 助力记录</h2><div style="color:#888; font-size:13px">暂无记录</div></div>`);
     return;
   }
-  const items = [...h].reverse().map(it => `
+  // 后端 assist_history 已按时间倒序（最新在前），这里直接展示，不再 reverse
+  const items = h.map(it => `
     <div class="history-item">
       <span class="h-main">
         <span class="h-acc">${escapeHtml(it.account || '未知账号')}</span>
