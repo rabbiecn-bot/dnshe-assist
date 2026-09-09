@@ -5,9 +5,10 @@ DNSHE 永久升级中心（好友助力）自动化工具。填写好友助力�
 ## ✨ 功能
 
 - 📊 **账号总览**：展示所有 DNSHE 账号及剩余可用助力次数
-- 🌐 **域名管理**：展示所有账号下的域名，可对未永久域名一键生成助力码
+- 🌐 **域名管理**：展示所有账号下的域名（含**到期时间**），可对未永久域名一键生成助力码
 - 🚀 **一键助力**：填写好友助力码，自动依次使用 5 个有剩余次数的账号通过 API 助力
 - 📜 **助力记录**：展示最近助力成功记录（存储于 Cloudflare KV）
+- 💾 **KV 缓存架构**：账号/域名/到期列表预先写入 KV，前端从 KV 缓存读取（0 次 DNSHE 请求），一键同步 DNSHE 权威
 
 ## 🏗️ 架构
 
@@ -16,15 +17,20 @@ GitHub 仓库 (本仓库)
   │  代码 + GitHub Actions 一键部署
   ▼
 Cloudflare Worker (src/worker.js)
-  │  读取 DNSHE_ACCOUNTS 环境变量（多账号 API 凭证）
-  │  调用 DNSHE 永久升级中心 API (permanent_upgrade)
+  │  ┌─ /api/status  读 KV 缓存（0 次 DNSHE 请求）
+  │  ├─ /api/sync    一键同步 DNSHE 权威 → 覆盖 KV 缓存
+  │  ├─ /api/create  生成助力码（直连 DNSHE，成功后刷新缓存）
+  │  └─ /api/assist  触发助力（直连 DNSHE，成功后刷新缓存）
+  │                    ↑ 只有写操作才消耗 DNSHE 请求（30 次/分钟限制）
   ▼
 DNSHE API (api005.dnshe.com)
 ```
 
-- 前端：`public/index.html`（Worker static assets 托管）
-- 后端：`src/worker.js` + `src/dnshe.js`（DNSHE API 客户端）
-- 存储：Cloudflare KV（`ASSIST_KV`，助力记录）
+- 前端：`public/index.html`（Worker static assets 托管，手机适配）
+- 后端：`src/worker.js` + `src/dnshe.js`（DNSHE API 客户端，含 525/5xx 自动重试）
+- 存储：Cloudflare KV（`ASSIST_KV`：`status:cache` 快照 + `assist:history` 助力记录）
+
+> **缓存策略**：DNSHE 限制 30 次请求/分钟。所有读操作（查看账号额度、域名、到期）都从 KV 缓存读取，0 消耗。只有「生成助力码」「触发助力」这类写操作才直连 DNSHE。手动点「🔄 同步 DNSHE」或首次访问无缓存时，才从权威拉取全量数据（6 账号 ≈ 12 次请求，串行 + 间隔执行）。
 
 ## 🚀 一键部署（GitHub Actions）
 
