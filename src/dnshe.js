@@ -42,11 +42,19 @@ export async function callDnshe(account, endpoint, action, query, body) {
     if (qs) url += `&${qs}`;
   }
 
-  const headers = {
-    'X-API-Key': account['X-API-Key'],
-    'X-API-Secret': account['X-API-Secret'],
-    'Content-Type': 'application/json',
-  };
+  // 官方文档（V2.0）规范：
+  //   - GET（list 类查询）只带 X-API-Key / X-API-Secret，不带 Content-Type
+  //   - POST（create/assist/cancel/update 等写操作）才带 Content-Type: application/json
+  const headers = body
+    ? {
+        'X-API-Key': account['X-API-Key'],
+        'X-API-Secret': account['X-API-Secret'],
+        'Content-Type': 'application/json',
+      }
+    : {
+        'X-API-Key': account['X-API-Key'],
+        'X-API-Secret': account['X-API-Secret'],
+      };
 
   // 重试 2 次：525（SSL 握手失败）、5xx、网络错误
   let last = null;

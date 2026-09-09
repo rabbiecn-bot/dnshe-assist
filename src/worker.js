@@ -273,11 +273,13 @@ async function handleAssist(request, env, cors) {
 
   const maxAccounts = Math.min(Math.max(parseInt(body.max_accounts) || 5, 1), 15);
 
-  // 1. 获取所有账号状态（并发），挑出有剩余次数的
-  const states = await Promise.all(accounts.map(async (acct) => {
+  // 1. 获取所有账号状态（串行 + 间隔，官方文档：批量操作不支持、必须逐个调用）
+  const states = [];
+  for (const acct of accounts) {
     const state = await getUpgradeState(acct);
-    return { acct, state };
-  }));
+    states.push({ acct, state });
+    await new Promise(r => setTimeout(r, 300));
+  }
 
   const usable = states
     .filter(s => !s.state.error)
