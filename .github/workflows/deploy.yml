@@ -52,9 +52,16 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          DNSHE_ACCOUNTS: ${{ secrets.DNSHE_ACCOUNTS }}
         run: |
-          # 如果 DNSHE_ACCOUNTS secret 存在，注入为 Worker secret
-          if [ -n "${{ secrets.DNSHE_ACCOUNTS }}" ]; then
-            echo "${{ secrets.DNSHE_ACCOUNTS }}" | wrangler secret put DNSHE_ACCOUNTS || true
+          # 如果 DNSHE_ACCOUNTS secret 存在，用 CF API 注入为 Worker secret（非交互，避免 wrangler 询问）
+          if [ -n "$DNSHE_ACCOUNTS" ]; then
+            echo "注入 DNSHE_ACCOUNTS 到 Worker..."
+            curl -sS -X PUT \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/dnshe-assist/secrets" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "{\"name\":\"DNSHE_ACCOUNTS\",\"text\":$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$DNSHE_ACCOUNTS"),\"type\":\"secret_text\"}" \
+              | tee /tmp/secret_resp.json
           fi
           wrangler deploy
