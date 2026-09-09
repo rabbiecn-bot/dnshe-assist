@@ -56,7 +56,14 @@ export default {
 function json(data, status = 200, cors = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...cors },
+    headers: {
+      'Content-Type': 'application/json',
+      // 禁止缓存：/api/status 是读 KV 的实时数据，浏览器/Cf 边缘不得缓存旧响应
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      ...cors,
+    },
   });
 }
 

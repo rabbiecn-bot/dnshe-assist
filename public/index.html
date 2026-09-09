@@ -226,6 +226,7 @@ function showToast(msg, type = '') {
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store', // 禁止浏览器缓存 API 响应，确保读最新 KV
     ...opts,
   });
   const j = await res.json().catch(() => ({ success: false, error: '响应解析失败' }));
