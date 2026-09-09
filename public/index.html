@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DNSHE 助力助手</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
+    min-height: 100vh;
+    color: #e8e8e8;
+    padding: 20px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 24px; background: rgba(255,255,255,0.06);
+    border-radius: 14px; margin-bottom: 20px; backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  h1 { font-size: 20px; font-weight: 600; }
+  h1 span { color: #4fc3f7; }
+  .btn {
+    background: #4fc3f7; color: #0f2027; border: none; padding: 8px 18px;
+    border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn:hover { background: #81d4fa; transform: translateY(-1px); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .btn.green { background: #66bb6a; color: #fff; }
+  .btn.green:hover { background: #81c784; }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+
+  .card {
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px; padding: 20px; margin-bottom: 20px;
+    backdrop-filter: blur(10px);
+  }
+  .card h2 { font-size: 16px; margin-bottom: 14px; color: #4fc3f7; }
+
+  /* 账号总览 */
+  .summary { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat {
+    background: rgba(255,255,255,0.06); border-radius: 10px; padding: 12px 18px;
+    flex: 1; min-width: 120px; text-align: center;
+  }
+  .stat .num { font-size: 26px; font-weight: 700; color: #4fc3f7; }
+  .stat .label { font-size: 12px; color: #aaa; margin-top: 4px; }
+
+  /* 账号表格 */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  th { color: #aaa; font-weight: 500; font-size: 12px; }
+  td .name { font-weight: 600; }
+  .pill {
+    display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  }
+  .pill.ok { background: rgba(102,187,106,0.2); color: #81c784; }
+  .pill.warn { background: rgba(255,167,38,0.2); color: #ffb74d; }
+  .pill.danger { background: rgba(239,83,80,0.2); color: #ef5350; }
+  .pill.info { background: rgba(79,195,247,0.2); color: #4fc3f7; }
+  .bar { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .bar > div { height: 100%; background: linear-gradient(90deg, #4fc3f7, #66bb6a); border-radius: 3px; }
+
+  /* 域名卡片 */
+  .domain-group { margin-bottom: 14px; }
+  .domain-group .g-title { font-size: 13px; color: #4fc3f7; margin-bottom: 8px; font-weight: 600; }
+  .domain-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+  .domain-item {
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .domain-item .d-name { font-weight: 600; font-size: 13px; word-break: break-all; }
+  .domain-item .d-meta { font-size: 11px; color: #aaa; }
+  .domain-item .d-code {
+    font-family: monospace; background: rgba(79,195,247,0.12); color: #4fc3f7;
+    padding: 3px 8px; border-radius: 6px; font-size: 13px; letter-spacing: 1px;
+  }
+  .domain-item .d-actions { display: flex; gap: 6px; align-items: center; }
+
+  /* 助力表单 */
+  .assist-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .assist-form input[type=text] {
+    flex: 1; min-width: 200px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+    color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 15px; letter-spacing: 2px;
+    font-family: monospace;
+  }
+  .assist-form input[type=number] {
+    width: 80px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+    color: #fff; padding: 10px 8px; border-radius: 8px; font-size: 14px; text-align: center;
+  }
+  .assist-form input:focus { outline: none; border-color: #4fc3f7; }
+
+  /* 结果 */
+  .result-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; border-radius: 8px; margin-top: 8px; font-size: 13px;
+    background: rgba(255,255,255,0.04);
+  }
+  .result-item.ok { border-left: 3px solid #66bb6a; }
+  .result-item.fail { border-left: 3px solid #ef5350; }
+  .result-item .r-msg { color: #ccc; font-size: 12px; }
+
+  /* 历史 */
+  .history-item {
+    display: flex; justify-content: space-between; padding: 8px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px;
+  }
+  .history-item .h-time { color: #888; font-size: 12px; }
+
+  .loading { text-align: center; padding: 40px; color: #aaa; }
+  .error-box {
+    background: rgba(239,83,80,0.15); border: 1px solid rgba(239,83,80,0.3);
+    color: #ef9a9a; padding: 12px 16px; border-radius: 10px; margin: 12px 0; font-size: 13px;
+  }
+  .toast {
+    position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 10px;
+    background: #323232; color: #fff; font-size: 14px; z-index: 100; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    opacity: 0; transform: translateY(-10px); transition: all 0.3s;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.ok { background: #2e7d32; }
+  .toast.err { background: #c62828; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  footer { text-align: center; color: #666; font-size: 12px; padding: 20px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>DNSHE <span>助力助手</span></h1>
+    <button class="btn" onclick="loadAll()" id="refreshBtn">🔄 刷新</button>
+  </header>
+
+  <div id="summaryArea"></div>
+  <div id="contentArea">
+    <div class="loading">加载中...</div>
+  </div>
+
+  <footer>DNSHE Assist · 永久升级助力工具</footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let data = null;
+
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.className = 'toast', 3000);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const j = await res.json().catch(() => ({ success: false, error: '响应解析失败' }));
+  if (!res.ok && !j.success) throw new Error(j.error || j.message || `HTTP ${res.status}`);
+  return j;
+}
+
+async function loadAll() {
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.textContent = '🔄 刷新中...';
+  try {
+    data = await api('/api/status');
+    renderSummary(data);
+    renderAccounts(data);
+    renderDomains(data);
+    renderHistory(data);
+  } catch (e) {
+    document.getElementById('contentArea').innerHTML =
+      `<div class="error-box">加载失败：${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 刷新';
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[c]);
+}
+
+function renderSummary(d) {
+  const accs = d.accounts || [];
+  const totalRemaining = accs.reduce((s, a) => s + (a.helper_assist_remaining || 0), 0);
+  const totalLimit = accs.reduce((s, a) => s + (a.helper_assist_limit || 0), 0);
+  const domains = accs.reduce((s, a) => s + ((a.eligible_domains || []).length + (a.requests || []).length), 0);
+  const upgraded = accs.reduce((s, a) => s + (a.requests || []).filter(r => r.status === 'upgraded').length, 0);
+
+  document.getElementById('summaryArea').innerHTML = `
+    <div class="summary">
+      <div class="stat"><div class="num">${accs.length}</div><div class="label">DNSHE 账号</div></div>
+      <div class="stat"><div class="num">${totalRemaining}</div><div class="label">剩余助力次数</div></div>
+      <div class="stat"><div class="num">${totalLimit}</div><div class="label">总助力上限</div></div>
+      <div class="stat"><div class="num">${domains}</div><div class="label">托管域名</div></div>
+      <div class="stat"><div class="num">${upgraded}</div><div class="label">已永久化</div></div>
+    </div>`;
+}
+
+function renderAccounts(d) {
+  const accs = (d.accounts || []).filter(a => !a.error);
+  if (accs.length === 0) return;
+
+  const rows = accs.map(a => {
+    const pct = a.helper_assist_limit ? Math.round(a.helper_assist_count / a.helper_assist_limit * 100) : 0;
+    const statusPill = a.helper_limit_reached
+      ? '<span class="pill danger">已达上限</span>'
+      : (a.helper_assist_remaining > 0 ? '<span class="pill ok">可用</span>' : '<span class="pill warn">低额度</span>');
+    return `<tr>
+      <td><span class="name">${escapeHtml(a.name)}</span></td>
+      <td><span class="pill info">${a.helper_assist_remaining} / ${a.helper_assist_limit}</span></td>
+      <td style="min-width:120px"><div class="bar"><div style="width:${pct}%"></div></div></td>
+      <td>${statusPill}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('contentArea').insertAdjacentHTML('beforeend', `
+    <div class="card">
+      <h2>📊 账号助力额度</h2>
+      <table>
+        <thead><tr><th>账号</th><th>剩余/上限</th><th>使用进度</th><th>状态</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`);
+}
+
+function renderDomains(d) {
+  const accs = (d.accounts || []).filter(a => !a.error);
+  const groups = accs.map(a => {
+    // 合并可升级域名和已有任务的域名
+    const eligible = (a.eligible_domains || []).filter(el =>
+      !(a.requests || []).some(r => r.domain === el.domain));
+    const requests = a.requests || [];
+
+    const items = [
+      ...eligible.map(el => ({
+        domain: el.domain,
+        status: 'eligible',
+        code: '',
+        count: 0,
+        target: a.assist_required || 5,
+        subdomain_id: el.id,
+        account: a.name,
+      })),
+      ...requests.map(r => ({
+        domain: r.domain,
+        status: r.status,
+        code: r.assist_code || '',
+        count: r.assist_count || 0,
+        target: r.target_assists || 5,
+        subdomain_id: r.id,
+        account: a.name,
+      })),
+    ];
+
+    return { name: a.name, items };
+  }).filter(g => g.items.length > 0);
+
+  if (groups.length === 0) return;
+
+  const html = groups.map(g => `
+    <div class="domain-group">
+      <div class="g-title">${escapeHtml(g.name)}（${g.items.length} 个域名）</div>
+      <div class="domain-list">
+        ${g.items.map(it => renderDomainItem(it)).join('')}
+      </div>
+    </div>`).join('');
+
+  document.getElementById('contentArea').insertAdjacentHTML('beforeend', `
+    <div class="card">
+      <h2>🌐 域名列表（未永久域名可生成助力码）</h2>
+      ${html}
+      <div class="assist-form" style="margin-top:18px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.08)">
+        <input type="text" id="assistCode" placeholder="输入好友助力码（如 AB12CD34）" autocomplete="off">
+        <input type="number" id="maxAccounts" value="5" min="1" max="15" title="使用账号数">
+        <button class="btn green" onclick="doAssist()">🚀 触发助力</button>
+      </div>
+      <div id="assistResult" style="margin-top:12px"></div>
+    </div>`);
+}
+
+function renderDomainItem(it) {
+  let pill, codeHtml, actionHtml = '';
+  if (it.status === 'upgraded') {
+    pill = '<span class="pill ok">✅ 永久</span>';
+  } else if (it.status === 'pending' || it.status === 'active' || it.status === 'processing' || it.status === 'in_progress') {
+    pill = `<span class="pill warn">升级中 ${it.count}/${it.target}</span>`;
+    codeHtml = it.code ? `<div class="d-code">${it.code}</div>` : '';
+  } else if (it.status === 'eligible') {
+    pill = '<span class="pill info">可升级</span>';
+    actionHtml = `<button class="btn small green" onclick="createCode('${escapeHtml(it.account)}', ${it.subdomain_id}, this)">生成助力码</button>`;
+  } else {
+    pill = `<span class="pill warn">${escapeHtml(it.status)}</span>`;
+  }
+
+  return `<div class="domain-item">
+    <div class="d-name">${escapeHtml(it.domain)}</div>
+    <div class="d-meta">${pill}</div>
+    ${codeHtml || ''}
+    <div class="d-actions">${actionHtml}</div>
+  </div>`;
+}
+
+async function createCode(account, subdomainId, btn) {
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  try {
+    const j = await api('/api/create', {
+      method: 'POST',
+      body: JSON.stringify({ account, subdomain_id: subdomainId }),
+    });
+    showToast(j.message || '助力码生成成功', 'ok');
+    setTimeout(loadAll, 800);
+  } catch (e) {
+    showToast('生成失败：' + e.message, 'err');
+    btn.disabled = false;
+    btn.textContent = '生成助力码';
+  }
+}
+
+async function doAssist() {
+  const code = document.getElementById('assistCode').value.trim().toUpperCase();
+  const max = parseInt(document.getElementById('maxAccounts').value) || 5;
+  if (!/^[A-Z0-9]{6,16}$/.test(code)) {
+    showToast('请输入正确的助力码（6-16 位字母数字）', 'err');
+    return;
+  }
+
+  const box = document.getElementById('assistResult');
+  box.innerHTML = '<div class="loading" style="padding:16px">⏳ 正在依次使用账号助力...</div>';
+
+  try {
+    const j = await api('/api/assist', {
+      method: 'POST',
+      body: JSON.stringify({ assist_code: code, max_accounts: max }),
+    });
+    const items = (j.results || []).map(r => `
+      <div class="result-item ${r.ok ? 'ok' : 'fail'}">
+        <span>${escapeHtml(r.name)}</span>
+        <span class="r-msg">${r.ok ? '✅ ' : '❌ '}${escapeHtml(r.message)}</span>
+      </div>`).join('');
+    box.innerHTML = `
+      <div style="margin-bottom:8px; font-size:14px; font-weight:600">
+        助力码 <code style="color:#4fc3f7">${escapeHtml(j.assist_code)}</code>：
+        <span style="color:${j.total_success > 0 ? '#81c784' : '#ef5350'}">成功 ${j.total_success} 次</span>
+      </div>
+      ${items || '<div style="color:#888; font-size:13px">无可用的账号（额度用完或都已助力过）</div>'}`;
+    showToast(j.total_success > 0 ? `助力成功 ${j.total_success} 次 🎉` : '助力未成功', j.total_success > 0 ? 'ok' : 'err');
+    setTimeout(loadAll, 1500);
+  } catch (e) {
+    box.innerHTML = `<div class="error-box">助力失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderHistory(d) {
+  const h = d.assist_history || [];
+  if (h.length === 0) {
+    document.getElementById('contentArea').insertAdjacentHTML('beforeend', `
+      <div class="card"><h2>📜 助力成功记录</h2><div style="color:#888; font-size:13px">暂无记录</div></div>`);
+    return;
+  }
+  const items = [...h].reverse().map(it => `
+    <div class="history-item">
+      <span><code>${escapeHtml(it.assist_code)}</code> → ${escapeHtml(it.account)}</span>
+      <span class="h-time">${escapeHtml((it.ts || '').replace('T', ' ').slice(0, 19))}</span>
+    </div>`).join('');
+  document.getElementById('contentArea').insertAdjacentHTML('beforeend', `
+    <div class="card"><h2>📜 助力成功记录（最近 ${h.length} 条）</h2>${items}</div>`);
+}
+
+loadAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+name: Deploy DNSHE Assist to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Create KV namespace if missing
+        id: kv
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          # 检查 wrangler.toml 是否还是占位符；若是则自动创建 KV 并回填
+          if grep -q "YOUR_ASSIST_KV_ID" wrangler.toml; then
+            echo "创建 KV namespace ASSIST_KV..."
+            OUT=$(wrangler kv namespace create ASSIST_KV 2>&1)
+            echo "$OUT"
+            ID=$(echo "$OUT" | grep -oE '"id":\s*"[0-9a-f]{32}"' | head -1 | grep -oE '[0-9a-f]{32}')
+            if [ -z "$ID" ]; then
+              # 旧版 wrangler 输出格式兼容
+              ID=$(echo "$OUT" | grep -oE '[0-9a-f]{32}' | head -1)
+            fi
+            if [ -z "$ID" ]; then
+              echo "::error::无法从 wrangler 输出解析 KV namespace id"
+              echo "$OUT"
+              exit 1
+            fi
+            echo "KV namespace id: $ID"
+            sed -i "s/YOUR_ASSIST_KV_ID/$ID/g" wrangler.toml
+          else
+            echo "wrangler.toml 已有 KV id，跳过创建"
+          fi
+
+      - name: Deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          # 如果 DNSHE_ACCOUNTS secret 存在，注入为 Worker secret
+          if [ -n "${{ secrets.DNSHE_ACCOUNTS }}" ]; then
+            echo "${{ secrets.DNSHE_ACCOUNTS }}" | wrangler secret put DNSHE_ACCOUNTS || true
+          fi
+          wrangler deploy

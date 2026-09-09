@@ -1,0 +1,17 @@
+# DNSHE 助力助手 - Cloudflare Worker 配置
+# 部署前需设置 secrets：
+#   wrangler secret put DNSHE_ACCOUNTS   # JSON 数组：[{name, X-API-Key, X-API-Secret}, ...]
+#
+# KV namespace（存储助力记录）：部署脚本会自动创建并回填 YOUR_ASSIST_KV_ID
+#   手动创建：wrangler kv namespace create ASSIST_KV
+
+name = "dnshe-assist"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+
+[assets]
+directory = "./public"
+
+[[kv_namespaces]]
+binding = "ASSIST_KV"
+id = "YOUR_ASSIST_KV_ID"
