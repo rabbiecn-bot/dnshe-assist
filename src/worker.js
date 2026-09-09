@@ -94,6 +94,7 @@ async function fetchAllAccounts(env) {
   for (const acct of accounts) {
     const state = await getUpgradeState(acct);
     if (state.error) {
+      console.error(`[sync] ${acct.name} getUpgradeState failed: ${state.error}`);
       results.push({ name: acct.name, error: state.error });
       continue;
     }
@@ -101,6 +102,7 @@ async function fetchAllAccounts(env) {
     // 域名列表（subdomains，含到期时间）
     const { subdomains, error: subError } = await getSubdomains(acct);
     if (subError) {
+      console.error(`[sync] ${acct.name} getSubdomains failed: ${subError}`);
       results.push({ name: acct.name, error: `额度 OK，但域名列表失败: ${subError}` });
       continue;
     }
