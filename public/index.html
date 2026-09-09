@@ -338,11 +338,20 @@ function renderAccounts(d) {
     const quotaHtml = a.quota
       ? `<span class="pill info">域名 ${domainCount} 个 · 可注册 ${a.quota.available}/${a.quota.total}</span>`
       : `<span class="pill info">域名 ${domainCount} 个</span>`;
+    // 邀请奖励额度（DNSHE quota.invite_bonus / 封顶 5；历史遗留可能超 5）
+    const inviteBonus = a.quota && typeof a.quota.invite_bonus === 'number' ? a.quota.invite_bonus : null;
+    const inviteHtml = inviteBonus === null
+      ? '<span style="color:#888">—</span>'
+      : `<span class="pill ${inviteBonus >= 5 ? 'ok' : 'info'}">📈 ${inviteBonus} / 5</span>`;
+    const inviteBar = inviteBonus === null
+      ? ''
+      : `<div class="bar" title="邀请奖励额度 ${inviteBonus}/5"><div style="width:${Math.min(100, inviteBonus / 5 * 100)}%"></div></div>`;
     return `<tr>
       <td><span class="name">${escapeHtml(a.name)}</span></td>
       <td>${quotaHtml}</td>
       <td><span class="pill info">${a.helper_assist_remaining} / ${a.helper_assist_limit}</span></td>
       <td style="min-width:120px"><div class="bar"><div style="width:${pct}%"></div></div></td>
+      <td style="min-width:100px">${inviteHtml}${inviteBar}</td>
       <td>${statusPill}</td>
     </tr>`;
   }).join('');
@@ -352,7 +361,7 @@ function renderAccounts(d) {
       <h2>📊 账号助力额度</h2>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>账号</th><th>域名数 / 剩余额度</th><th>助力剩余/上限</th><th>使用进度</th><th>状态</th></tr></thead>
+          <thead><tr><th>账号</th><th>域名数 / 剩余额度</th><th>助力剩余/上限</th><th>使用进度</th><th>邀请奖励</th><th>状态</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
