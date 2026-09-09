@@ -30,12 +30,12 @@ jobs:
           # 检查 wrangler.toml 是否还是占位符；若是则自动创建 KV 并回填
           if grep -q "YOUR_ASSIST_KV_ID" wrangler.toml; then
             echo "创建 KV namespace ASSIST_KV..."
-            OUT=$(wrangler kv namespace create ASSIST_KV 2>&1)
+            OUT=$(wrangler kv namespace create ASSIST_KV 2>&1 || true)
             echo "$OUT"
-            ID=$(echo "$OUT" | grep -oE '"id":\s*"[0-9a-f]{32}"' | head -1 | grep -oE '[0-9a-f]{32}')
+            # wrangler 4.x 输出为 TOML 格式: id = "xxx"；3.x 为 JSON: "id": "xxx"
+            ID=$(echo "$OUT" | grep -oE 'id[ =:]+"[0-9a-f]{32}"' | grep -oE '[0-9a-f]{32}' | head -1 || true)
             if [ -z "$ID" ]; then
-              # 旧版 wrangler 输出格式兼容
-              ID=$(echo "$OUT" | grep -oE '[0-9a-f]{32}' | head -1)
+              ID=$(echo "$OUT" | grep -oE '[0-9a-f]{32}' | head -1 || true)
             fi
             if [ -z "$ID" ]; then
               echo "::error::无法从 wrangler 输出解析 KV namespace id"

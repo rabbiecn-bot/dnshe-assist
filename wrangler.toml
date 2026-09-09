@@ -14,4 +14,4 @@ directory = "./public"
 
 [[kv_namespaces]]
 binding = "ASSIST_KV"
-id = "YOUR_ASSIST_KV_ID"
+id = "13654212b3b84106a20516f574cacbf9"
