@@ -12,7 +12,7 @@
  *   POST /api/create  — 为指定域名生成助力码（直连 DNSHE）
  *   POST /api/assist  — 用助力码触发助力（直连 DNSHE）
  */
-import { getAccounts, getUpgradeState, getSubdomains, callDnshe } from './dnshe.js';
+import { getAccounts, getUpgradeState, getSubdomains, getQuota, callDnshe } from './dnshe.js';
 
 const CACHE_KEY = 'status:cache';
 
@@ -85,8 +85,8 @@ async function writeCache(env, snapshot) {
 /* ==================== 权威数据拉取（sync） ==================== */
 
 /**
- * 从 DNSHE 拉取所有账号全量状态：额度 + 域名列表（含到期）+ 助力任务 + 助力记录
- * 每个账号 2 次请求（permanent_upgrade list + subdomains list），6 账号 ≈ 12 次
+ * 从 DNSHE 拉取所有账号全量状态：额度 + 域名列表（含到期）+ 助力任务 + 助力记录 + 域名注册额度
+ * 每个账号 3 次请求（permanent_upgrade list + subdomains list + quota），6 账号 ≈ 18 次
  * 注意：串行 + 间隔执行（DNSHE 30 次/分钟限流，且 525 防护对并发敏感）
  */
 async function fetchAllAccounts(env) {
@@ -110,6 +110,13 @@ async function fetchAllAccounts(env) {
       console.error(`[sync] ${acct.name} getSubdomains failed: ${subError}`);
       results.push({ name: acct.name, error: `额度 OK，但域名列表失败: ${subError}` });
       continue;
+    }
+
+    // 域名注册额度（quota）
+    const { quota, error: quotaError } = await getQuota(acct);
+    if (quotaError) {
+      console.error(`[sync] ${acct.name} getQuota failed: ${quotaError}`);
+      // quota 失败不中断，仅缺失该字段
     }
 
     // 合并：requests 里的域名标记升级状态/助力码；未在 requests 且未永久的标记可升级
@@ -142,6 +149,7 @@ async function fetchAllAccounts(env) {
       helper_assist_count: state.helper_assist_count ?? 0,
       helper_assist_remaining: state.helper_assist_remaining ?? 0,
       helper_limit_reached: state.helper_limit_reached ?? false,
+      quota, // {used, base, invite_bonus, total, available} 或 null
       domains,
       requests: (state.requests || []).map(r => ({
         id: r.id,
@@ -175,6 +183,44 @@ async function fetchAllAccounts(env) {
       if (raw) assist_history = JSON.parse(raw);
     } catch (e) { console.error('KV read error:', e.message); }
   }
+
+  // 归一化助力历史（以 DNSHE assist_logs 为权威源，KV 补充时间戳）：
+  // ① 同一助力码只保留一条（需求：不管助力几次都只记录一条）
+  // ② 账号/域名直接用 DNSHE 返回的加密字段（counterpart/domain，非完整）
+  // ③ 助力次数 = 该码 assisted 记录条数（历史累计，可能不是 5，因为之前可能已有人助力过）
+  const assistedMap = new Map(); // assist_code -> {domain, account, count, ts}
+  for (const r of results) {
+    if (r.error) continue;
+    for (const l of (r.assist_logs || [])) {
+      if (l.role !== 'assisted' || !l.assist_code) continue;
+      const k = l.assist_code.toUpperCase();
+      if (!assistedMap.has(k)) assistedMap.set(k, { domain: '', account: '', count: 0, ts: '' });
+      const e = assistedMap.get(k);
+      if (l.domain) e.domain = l.domain;
+      if (l.counterpart) e.account = l.counterpart;
+      e.count++;
+      if (l.created_at && (!e.ts || l.created_at > e.ts)) e.ts = l.created_at;
+    }
+  }
+  // KV 记录补充时间戳/兼容（若 assist_logs 缺失该码但 KV 有，仍保留）
+  for (const h of (Array.isArray(assist_history) ? assist_history : [])) {
+    const k = (h.assist_code || '').toString().toUpperCase();
+    if (!k) continue;
+    if (!assistedMap.has(k)) {
+      assistedMap.set(k, { domain: h.domain || '', account: h.account || '', count: h.count || 1, ts: h.ts || '' });
+    } else if (!assistedMap.get(k).ts && h.ts) {
+      assistedMap.get(k).ts = h.ts;
+    }
+  }
+  assist_history = Array.from(assistedMap.entries())
+    .map(([code, e]) => ({
+      ts: e.ts || new Date().toISOString(),
+      assist_code: code,
+      domain: e.domain,
+      account: e.account,
+      count: e.count,
+    }))
+    .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
 
   return {
     ok: true,
@@ -327,21 +373,41 @@ async function handleAssist(request, env, cors) {
     results.push({ name: u.acct.name, ok, message });
     if (ok) totalSuccess++;
 
-    if (ok && env.ASSIST_KV) {
-      try {
-        const raw = await env.ASSIST_KV.get('assist:history');
-        const history = raw ? JSON.parse(raw) : [];
-        history.push({
-          ts: new Date().toISOString(),
-          account: u.acct.name,
-          assist_code: assistCode,
-          message,
-        });
-        await env.ASSIST_KV.put('assist:history', JSON.stringify(history.slice(-500)));
-      } catch (e) { console.error('KV write error:', e.message); }
-    }
-
     await new Promise(r => setTimeout(r, 300));
+  }
+
+  // 助力记录：同一助力码只记一条（不管域名是否已升级永久，只要助力了就记录）
+  // 记录内容：加密账号(counterpart)、加密域名(domain)、助力码、成功助力次数
+  if (totalSuccess > 0 && env.ASSIST_KV) {
+    try {
+      // 拉一次状态取该码最新的 assisted 日志（domain/counterpart 本身是 DNSHE 加密后的）
+      let domainMasked = '', accountMasked = '';
+      const okAccount = usable.find(u => results.some(r => r.name === u.acct.name && r.ok));
+      if (okAccount) {
+        const st = await getUpgradeState(okAccount.acct);
+        if (!st.error) {
+          const log = (st.assist_logs || [])
+            .filter(l => l.role === 'assisted' && l.assist_code === assistCode)
+            .pop();
+          if (log) {
+            domainMasked = log.domain || '';
+            accountMasked = log.counterpart || '';
+          }
+        }
+      }
+      const raw = await env.ASSIST_KV.get('assist:history');
+      let history = raw ? JSON.parse(raw) : [];
+      // 同码去重：旧的按账号逐条记录（account/message 格式）也一并清理
+      history = history.filter(h => h.assist_code !== assistCode);
+      history.push({
+        ts: new Date().toISOString(),
+        assist_code: assistCode,
+        domain: domainMasked,
+        account: accountMasked,
+        count: totalSuccess,
+      });
+      await env.ASSIST_KV.put('assist:history', JSON.stringify(history.slice(-200)));
+    } catch (e) { console.error('KV write error:', e.message); }
   }
 
   // 助力结束 → 刷新缓存

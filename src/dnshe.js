@@ -94,6 +94,18 @@ export async function getUpgradeState(account) {
 }
 
 /**
+ * 查询账号的域名（子域名）注册额度
+ * @returns {Promise<{quota: {used:number, base:number, invite_bonus:number, total:number, available:number}, error?: string}>}
+ */
+export async function getQuota(account) {
+  const { status, data } = await callDnshe(account, 'quota', 'list');
+  if (status === 200 && data && data.success && data.quota) {
+    return { quota: data.quota };
+  }
+  return { quota: null, error: data && data.message ? data.message : `HTTP ${status}` };
+}
+
+/**
  * 查询账号下的所有子域名（含到期时间）
  * @returns {Promise<{subdomains: Array, error?: string}>}
  */

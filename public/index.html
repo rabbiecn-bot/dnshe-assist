@@ -141,6 +141,11 @@
     display: flex; justify-content: space-between; gap: 8px; padding: 8px 12px;
     border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px; flex-wrap: wrap;
   }
+  .history-item .h-main { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .history-item .h-acc { color: #81c784; word-break: break-all; }
+  .history-item .h-arrow { color: #888; }
+  .history-item .h-dom { color: #64b5f6; word-break: break-all; }
+  .history-item .h-sub { display: flex; gap: 8px; align-items: center; color: #aaa; font-size: 12px; flex-wrap: wrap; }
   .history-item .h-time { color: #888; font-size: 12px; }
 
   .loading { text-align: center; padding: 40px; color: var(--text-dim); }
@@ -265,6 +270,9 @@ async function syncDnshe() {
 }
 
 function renderAll(d) {
+  // 清空 contentArea，去掉初始「加载中...」占位
+  document.getElementById('contentArea').innerHTML = '';
+  renderAssistCard();
   renderSummary(d);
   renderAccounts(d);
   renderDomains(d);
@@ -278,6 +286,20 @@ function renderAll(d) {
     note.textContent = `数据来自 ${d.cached ? 'KV 缓存' : 'DNSHE 权威'}，更新于 ${new Date(d.updated_at).toLocaleString('zh-CN')}`;
     document.getElementById('summaryArea').appendChild(note);
   }
+}
+
+/** 好友助力卡片：独立放最前（账号列表之前） */
+function renderAssistCard() {
+  document.getElementById('contentArea').insertAdjacentHTML('beforeend', `
+    <div class="card">
+      <h2>🚀 好友助力</h2>
+      <div class="assist-form">
+        <input type="text" id="assistCode" placeholder="输入好友助力码" autocomplete="off" inputmode="text">
+        <input type="number" id="maxAccounts" value="5" min="1" max="15" title="使用账号数">
+        <button class="btn green" onclick="doAssist()">🚀 触发助力</button>
+      </div>
+      <div id="assistResult" style="margin-top:12px"></div>
+    </div>`);
 }
 
 function escapeHtml(s) {
@@ -312,8 +334,13 @@ function renderAccounts(d) {
     const statusPill = a.helper_limit_reached
       ? '<span class="pill danger">已达上限</span>'
       : (a.helper_assist_remaining > 0 ? '<span class="pill ok">可用</span>' : '<span class="pill warn">低额度</span>');
+    const domainCount = (a.domains || []).length;
+    const quotaHtml = a.quota
+      ? `<span class="pill info">域名 ${domainCount} 个 · 可注册 ${a.quota.available}/${a.quota.total}</span>`
+      : `<span class="pill info">域名 ${domainCount} 个</span>`;
     return `<tr>
       <td><span class="name">${escapeHtml(a.name)}</span></td>
+      <td>${quotaHtml}</td>
       <td><span class="pill info">${a.helper_assist_remaining} / ${a.helper_assist_limit}</span></td>
       <td style="min-width:120px"><div class="bar"><div style="width:${pct}%"></div></div></td>
       <td>${statusPill}</td>
@@ -325,7 +352,7 @@ function renderAccounts(d) {
       <h2>📊 账号助力额度</h2>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>账号</th><th>剩余/上限</th><th>使用进度</th><th>状态</th></tr></thead>
+          <thead><tr><th>账号</th><th>域名数 / 剩余额度</th><th>助力剩余/上限</th><th>使用进度</th><th>状态</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -336,6 +363,7 @@ function renderDomains(d) {
   const accs = (d.accounts || []).filter(a => !a.error);
   const groups = accs.map(a => ({
     name: a.name,
+    quota: a.quota || null,
     items: (a.domains || []).map(dm => ({
       domain: dm.domain,
       status: dm.status,
@@ -351,24 +379,23 @@ function renderDomains(d) {
 
   if (groups.length === 0) return;
 
-  const html = groups.map(g => `
+  const html = groups.map(g => {
+    const quotaText = g.quota
+      ? ` · 可注册 ${g.quota.available}/${g.quota.total}`
+      : '';
+    return `
     <div class="domain-group">
-      <div class="g-title">${escapeHtml(g.name)}（${g.items.length} 个域名）</div>
+      <div class="g-title">${escapeHtml(g.name)}（${g.items.length} 个域名${quotaText}）</div>
       <div class="domain-list">
         ${g.items.map(it => renderDomainItem(it)).join('')}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   document.getElementById('contentArea').insertAdjacentHTML('beforeend', `
     <div class="card">
       <h2>🌐 域名列表（未永久域名可生成助力码）</h2>
       ${html}
-      <div class="assist-form" style="margin-top:16px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.08)">
-        <input type="text" id="assistCode" placeholder="输入好友助力码" autocomplete="off" inputmode="text">
-        <input type="number" id="maxAccounts" value="5" min="1" max="15" title="使用账号数">
-        <button class="btn green" onclick="doAssist()">🚀 触发助力</button>
-      </div>
-      <div id="assistResult" style="margin-top:12px"></div>
     </div>`);
 }
 
@@ -459,16 +486,23 @@ function renderHistory(d) {
   const area = document.getElementById('contentArea');
   if (h.length === 0) {
     area.insertAdjacentHTML('beforeend', `
-      <div class="card"><h2>📜 助力成功记录</h2><div style="color:#888; font-size:13px">暂无记录</div></div>`);
+      <div class="card"><h2>📜 助力记录</h2><div style="color:#888; font-size:13px">暂无记录</div></div>`);
     return;
   }
   const items = [...h].reverse().map(it => `
     <div class="history-item">
-      <span><code>${escapeHtml(it.assist_code)}</code> → ${escapeHtml(it.account)}</span>
-      <span class="h-time">${escapeHtml((it.ts || '').replace('T', ' ').slice(0, 19))}</span>
+      <span class="h-main">
+        <span class="h-acc">${escapeHtml(it.account || '未知账号')}</span>
+        <span class="h-arrow">→</span>
+        <span class="h-dom">${escapeHtml(it.domain || '未知域名')}</span>
+      </span>
+      <span class="h-sub">
+        <code>${escapeHtml(it.assist_code)}</code> · 助力 ${it.count || 1} 次
+        <span class="h-time">${escapeHtml((it.ts || '').replace('T', ' ').slice(0, 19))}</span>
+      </span>
     </div>`).join('');
   area.insertAdjacentHTML('beforeend', `
-    <div class="card"><h2>📜 助力成功记录（最近 ${h.length} 条）</h2>${items}</div>`);
+    <div class="card"><h2>📜 助力记录（最近 ${h.length} 条）</h2>${items}</div>`);
 }
 
 loadAll();
