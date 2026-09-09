@@ -28,7 +28,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
           # 检查 wrangler.toml 是否还是占位符；若是则自动创建 KV 并回填
-          if grep -q "YOUR_ASSIST_KV_ID" wrangler.toml; then
+          if grep -q 'id = "YOUR_ASSIST_KV_ID"' wrangler.toml; then
             echo "创建 KV namespace ASSIST_KV..."
             OUT=$(wrangler kv namespace create ASSIST_KV 2>&1 || true)
             echo "$OUT"
