@@ -82,6 +82,7 @@ async function writeCache(env, snapshot) {
 /**
  * 从 DNSHE 拉取所有账号全量状态：额度 + 域名列表（含到期）+ 助力任务 + 助力记录
  * 每个账号 2 次请求（permanent_upgrade list + subdomains list），6 账号 ≈ 12 次
+ * 注意：串行 + 间隔执行（DNSHE 30 次/分钟限流，且 525 防护对并发敏感）
  */
 async function fetchAllAccounts(env) {
   const accounts = getAccounts(env);
@@ -89,16 +90,19 @@ async function fetchAllAccounts(env) {
     return { ok: false, error: 'DNSHE_ACCOUNTS 环境变量未配置' };
   }
 
-  const results = await Promise.all(accounts.map(async (acct) => {
+  const results = [];
+  for (const acct of accounts) {
     const state = await getUpgradeState(acct);
     if (state.error) {
-      return { name: acct.name, error: state.error };
+      results.push({ name: acct.name, error: state.error });
+      continue;
     }
 
     // 域名列表（subdomains，含到期时间）
     const { subdomains, error: subError } = await getSubdomains(acct);
     if (subError) {
-      return { name: acct.name, error: `额度 OK，但域名列表失败: ${subError}` };
+      results.push({ name: acct.name, error: `额度 OK，但域名列表失败: ${subError}` });
+      continue;
     }
 
     // 合并：requests 里的域名标记升级状态/助力码；未在 requests 且未永久的标记可升级
@@ -124,7 +128,7 @@ async function fetchAllAccounts(env) {
       };
     });
 
-    return {
+    results.push({
       name: acct.name,
       assist_required: state.assist_required ?? 5,
       helper_assist_limit: state.helper_assist_limit ?? 15,
@@ -150,8 +154,11 @@ async function fetchAllAccounts(env) {
         counterpart: l.counterpart,
         created_at: l.created_at,
       })),
-    };
-  }));
+    });
+
+    // 串行间隔，降低瞬时请求密度
+    await new Promise(r => setTimeout(r, 350));
+  }
 
   // 读助力历史（KV 持久）
   let assist_history = [];
