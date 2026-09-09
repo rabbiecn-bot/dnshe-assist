@@ -328,10 +328,10 @@ function renderDomainItem(it) {
 
   if (it.status === 'upgraded') {
     pill = '<span class="pill ok">✅ 永久</span>';
-  } else if (it.code) {
+  } else if (it.status === 'in_progress' || it.code) {
     // 有助力码 = 升级中
     pill = `<span class="pill warn">升级中 ${it.count}/${it.target}</span>`;
-    codeHtml = `<div class="d-code">${escapeHtml(it.code)}</div>`;
+    codeHtml = it.code ? `<div class="d-code">${escapeHtml(it.code)}</div>` : '';
   } else {
     pill = '<span class="pill info">可升级</span>';
     actionHtml = `<button class="btn small green" onclick="createCode('${escapeHtml(it.account)}', ${it.subdomain_id}, this)">生成助力码</button>`;

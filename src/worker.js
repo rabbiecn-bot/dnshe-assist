@@ -108,10 +108,11 @@ async function fetchAllAccounts(env) {
     const domains = subdomains.map(s => {
       const req = reqMap[s.full_domain];
       const isUpgraded = s.never_expires === 1 || s.status === '永久' || s.status === 'Permanent';
+      const inProgress = !isUpgraded && req && (req.assist_code || req.status);
       return {
         id: s.id,
         domain: s.full_domain,
-        status: isUpgraded ? 'upgraded' : 'eligible',
+        status: isUpgraded ? 'upgraded' : (inProgress ? 'in_progress' : 'eligible'),
         never_expires: s.never_expires,
         expires_at: s.expires_at,
         created_at: s.created_at,
