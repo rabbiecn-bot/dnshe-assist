@@ -44,7 +44,12 @@ export default {
       return handleAssist(request, env, cors);
     }
 
-    return env.ASSETS.fetch(request);
+    // Pages 部署下静态资源由 Pages 直接服务（适配层已把非 /api/* 交给 next()），
+    // 这里只兜底未知 /api/* 路由
+    return new Response(JSON.stringify({ success: false, error: 'Not found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json', ...cors },
+    });
   },
 };
 

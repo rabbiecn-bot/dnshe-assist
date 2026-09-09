@@ -1,4 +1,4 @@
-name: Deploy DNSHE Assist to Cloudflare Workers
+name: Deploy DNSHE Assist to Cloudflare Pages
 
 on:
   push:
@@ -21,47 +21,30 @@ jobs:
       - name: Install Wrangler
         run: npm install -g wrangler
 
-      - name: Create KV namespace if missing
-        id: kv
+      - name: Ensure Pages project exists
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
-          # 检查 wrangler.toml 是否还是占位符；若是则自动创建 KV 并回填
-          if grep -q 'id = "YOUR_ASSIST_KV_ID"' wrangler.toml; then
-            echo "创建 KV namespace ASSIST_KV..."
-            OUT=$(wrangler kv namespace create ASSIST_KV 2>&1 || true)
-            echo "$OUT"
-            # wrangler 4.x 输出为 TOML 格式: id = "xxx"；3.x 为 JSON: "id": "xxx"
-            ID=$(echo "$OUT" | grep -oE 'id[ =:]+"[0-9a-f]{32}"' | grep -oE '[0-9a-f]{32}' | head -1 || true)
-            if [ -z "$ID" ]; then
-              ID=$(echo "$OUT" | grep -oE '[0-9a-f]{32}' | head -1 || true)
-            fi
-            if [ -z "$ID" ]; then
-              echo "::error::无法从 wrangler 输出解析 KV namespace id"
-              echo "$OUT"
-              exit 1
-            fi
-            echo "KV namespace id: $ID"
-            sed -i "s/YOUR_ASSIST_KV_ID/$ID/g" wrangler.toml
-          else
-            echo "wrangler.toml 已有 KV id，跳过创建"
-          fi
+          # 项目不存在则创建（首次）
+          wrangler pages project list 2>/dev/null | grep -q '^dnshe-assist ' || \
+            wrangler pages project create dnshe-assist --production-branch=main || true
 
-      - name: Deploy Worker
+      - name: Set DNSHE_ACCOUNTS secret
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           DNSHE_ACCOUNTS: ${{ secrets.DNSHE_ACCOUNTS }}
         run: |
-          # 如果 DNSHE_ACCOUNTS secret 存在，用 CF API 注入为 Worker secret（非交互，避免 wrangler 询问）
           if [ -n "$DNSHE_ACCOUNTS" ]; then
-            echo "注入 DNSHE_ACCOUNTS 到 Worker..."
-            curl -sS -X PUT \
-              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/dnshe-assist/secrets" \
-              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data "{\"name\":\"DNSHE_ACCOUNTS\",\"text\":$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$DNSHE_ACCOUNTS"),\"type\":\"secret_text\"}" \
-              | tee /tmp/secret_resp.json
+            echo "$DNSHE_ACCOUNTS" | wrangler pages secret put DNSHE_ACCOUNTS --project-name dnshe-assist
+          else
+            echo "DNSHE_ACCOUNTS secret 为空，跳过（保留线上已有值）"
           fi
-          wrangler deploy
+
+      - name: Deploy Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          wrangler pages deploy public --project-name dnshe-assist --branch=main
