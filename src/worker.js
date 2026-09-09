@@ -407,10 +407,14 @@ async function handleAssist(request, env, cors) {
         count: totalSuccess,
       });
       await env.ASSIST_KV.put('assist:history', JSON.stringify(history.slice(-200)));
+
+      // 同步增量更新 status:cache 快照（不依赖后台 refreshCache 的落地时机），
+      // 让前端 loadAll 能立即看到：计数 +1、剩余 -1、助力记录合并置顶
+      await updateCacheAfterAssist(env, results, assistCode, totalSuccess, domainMasked, accountMasked);
     } catch (e) { console.error('KV write error:', e.message); }
   }
 
-  // 助力结束 → 刷新缓存
+  // 助力结束 → 后台权威刷新兜底（与 DNSHE 完全对齐）
   refreshCache(env);
 
   return json({
@@ -420,6 +424,49 @@ async function handleAssist(request, env, cors) {
     max_accounts: maxAccounts,
     results,
   }, 200, cors);
+}
+
+/**
+ * 助力成功后同步增量更新 KV 快照：
+ *  - 成功账号 helper_assist_count +1、helper_assist_remaining -1（到 0 置 limit_reached）
+ *  - assist_history 同码去重合并、按时间倒序置顶
+ *  注：这只是让前端立即可见；后台 refreshCache 随后会用 DNSHE 权威数据完整覆盖。
+ */
+async function updateCacheAfterAssist(env, results, assistCode, totalSuccess, domainMasked, accountMasked) {
+  if (!env.ASSIST_KV || totalSuccess <= 0) return;
+  try {
+    const snapshot = await readCache(env);
+    if (!snapshot || !Array.isArray(snapshot.accounts)) return;
+
+    // 1. 更新成功账号计数/剩余
+    for (const r of results) {
+      if (!r.ok) continue;
+      const acc = snapshot.accounts.find(a => a.name === r.name);
+      if (!acc) continue;
+      acc.helper_assist_count = (acc.helper_assist_count ?? 0) + 1;
+      acc.helper_assist_remaining = Math.max(0, (acc.helper_assist_remaining ?? 0) - 1);
+      if (acc.helper_assist_remaining <= 0) acc.helper_limit_reached = true;
+    }
+
+    // 2. 助力记录：同码去重、合并、时间倒序置顶
+    const codeUpper = assistCode.toUpperCase();
+    const hist = (Array.isArray(snapshot.assist_history) ? snapshot.assist_history : [])
+      .filter(h => (h.assist_code || '').toUpperCase() !== codeUpper);
+    hist.push({
+      ts: new Date().toISOString(),
+      assist_code: assistCode,
+      domain: domainMasked,
+      account: accountMasked,
+      count: totalSuccess,
+    });
+    hist.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+    snapshot.assist_history = hist.slice(0, 200);
+
+    snapshot.updated_at = new Date().toISOString();
+    await writeCache(env, snapshot);
+  } catch (e) {
+    console.error('incremental cache update error:', e.message);
+  }
 }
 
 /** 后台刷新 KV 缓存（不阻塞响应） */
