@@ -17,7 +17,7 @@ import { getAccounts, getUpgradeState, getSubdomains, getQuota, callDnshe } from
 const CACHE_KEY = 'status:cache';
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
@@ -38,10 +38,10 @@ export default {
       return handleSync(env, cors);
     }
     if (path === '/api/create' && method === 'POST') {
-      return handleCreate(request, env, cors);
+      return handleCreate(request, env, cors, ctx);
     }
     if (path === '/api/assist' && method === 'POST') {
-      return handleAssist(request, env, cors);
+      return handleAssist(request, env, cors, ctx);
     }
 
     // Pages 部署下静态资源由 Pages 直接服务（适配层已把非 /api/* 交给 next()），
@@ -182,7 +182,105 @@ async function fetchAllAccounts(env) {
     await new Promise(r => setTimeout(r, 350));
   }
 
-  // 读助力历史（KV 持久）
+  return await attachAssistHistory(env, results);
+}
+
+/**
+ * 单独刷新一个账号的最新状态（create 成功后同步用，2~4 个请求，毫秒级等待可接受）
+ * 与 fetchAllAccounts 使用完全相同的字段构建逻辑，保证缓存结构一致。
+ */
+async function fetchOneAccount(env, acct) {
+  const state = await getUpgradeState(acct);
+  if (state.error) {
+    return { name: acct.name, error: state.error };
+  }
+  const quota = await getQuota(acct);
+  const subs = await getSubdomains(acct);
+
+  const assist_required = state.assist_required ?? 5;
+  const helper_assist_limit = state.helper_assist_limit ?? 15;
+  const helper_assist_count = state.helper_assist_count ?? 0;
+  const helper_assist_remaining = state.helper_assist_remaining ?? 0;
+  const helper_limit_reached = state.helper_limit_reached ?? false;
+
+  const reqMap = {};
+  (state.requests || []).forEach(r => { reqMap[r.domain || r.subdomain] = r; });
+
+  const domains = (subs.subdomains || []).map(s => {
+    const req = reqMap[s.full_domain];
+    const isUpgraded = s.never_expires === 1 || s.status === '永久' || s.status === 'Permanent';
+    const inProgress = !isUpgraded && req && (req.assist_code || req.status);
+    return {
+      id: s.id,
+      domain: s.full_domain,
+      status: isUpgraded ? 'upgraded' : (inProgress ? 'in_progress' : 'eligible'),
+      never_expires: s.never_expires,
+      expires_at: s.expires_at,
+      created_at: s.created_at,
+      assist_code: req ? (req.assist_code || '') : '',
+      assist_count: req ? (req.assist_count || 0) : 0,
+      target_assists: req ? (req.target_assists || 5) : 5,
+      request_status: req ? (req.status || '') : '',
+    };
+  });
+
+  return {
+    name: acct.name,
+    assist_required,
+    helper_assist_limit,
+    helper_assist_count,
+    helper_assist_remaining,
+    helper_limit_reached,
+    quota,
+    domains,
+    requests: (state.requests || []).map(r => ({
+      id: r.id,
+      domain: r.domain,
+      assist_code: r.assist_code,
+      assist_count: r.assist_count,
+      target_assists: r.target_assists,
+      status: r.status,
+      created_at: r.created_at,
+      upgraded_at: r.upgraded_at,
+    })),
+    assist_logs: (state.assist_logs || []).slice(0, 50).map(l => ({
+      id: l.id,
+      role: l.role,
+      domain: l.domain,
+      assist_code: l.assist_code,
+      counterpart: l.counterpart,
+      created_at: l.created_at,
+    })),
+  };
+}
+
+/**
+ * create 成功后同步刷新该账号并合并回 KV 快照（不依赖后台任务，前端立即可见）
+ */
+async function mergeOneAccountIntoCache(env, accountName) {
+  if (!env.ASSIST_KV) return;
+  const acct = (getAccounts(env) || []).find(a => a.name === accountName);
+  if (!acct) return;
+  const one = await fetchOneAccount(env, acct);
+  if (one.error) {
+    console.error('refresh one account error:', accountName, one.error);
+    return;
+  }
+  let snapshot = await readCache(env);
+  // 缓存为空（首次 create，尚无 /api/status 触发）→ 初始化快照结构
+  if (!snapshot || typeof snapshot !== 'object') {
+    snapshot = { ok: true, accounts: [], assist_history: [] };
+  }
+  if (!Array.isArray(snapshot.accounts)) snapshot.accounts = [];
+  const idx = snapshot.accounts.findIndex(a => a.name === accountName);
+  if (idx >= 0) snapshot.accounts[idx] = one;
+  else snapshot.accounts.push(one);
+  snapshot.updated_at = new Date().toISOString();
+  await writeCache(env, snapshot);
+}
+
+/** 从 fetchAllAccounts 返回结果中提取并归一化助力历史 + KV 补充（供 fetchAllAccounts 复用） */
+async function attachAssistHistory(env, results) {
   let assist_history = [];
   if (env.ASSIST_KV) {
     try {
@@ -275,8 +373,8 @@ async function handleSync(env, cors) {
   return json({ success: true, cached: false, ...snapshot }, 200, cors);
 }
 
-/** POST /api/create — 为域名生成助力码（直连 DNSHE，成功后刷新缓存） */
-async function handleCreate(request, env, cors) {
+/** POST /api/create — 为域名生成助力码（直连 DNSHE，成功后同步刷新缓存） */
+async function handleCreate(request, env, cors, ctx) {
   const accounts = getAccounts(env);
   if (accounts.length === 0) {
     return json({ success: false, error: 'DNSHE_ACCOUNTS 环境变量未配置' }, 500, cors);
@@ -300,8 +398,14 @@ async function handleCreate(request, env, cors) {
 
   const { status, data } = await callDnshe(acct, 'permanent_upgrade', 'create', null, { subdomain_id: subdomainId });
   if (status === 200 && data && data.success) {
-    // 创建成功 → 后台刷新缓存（不阻塞响应）
-    refreshCache(env);
+    // 创建成功 → 同步刷新该账号状态写回 KV（2~4 个请求，毫秒级；前端 loadAll 立即可见新助力码）
+    try {
+      await mergeOneAccountIntoCache(env, accountName);
+    } catch (e) {
+      console.error('merge one account after create error:', e.message);
+    }
+    // 后台全量权威刷新兜底（waitUntil 挂在请求上下文，响应返回后任务继续执行）
+    scheduleFullRefresh(env, ctx);
     return json({
       success: true,
       account: accountName,
@@ -316,7 +420,7 @@ async function handleCreate(request, env, cors) {
 }
 
 /** POST /api/assist — 用助力码触发助力（直连 DNSHE，成功后刷新缓存） */
-async function handleAssist(request, env, cors) {
+async function handleAssist(request, env, cors, ctx) {
   const accounts = getAccounts(env);
   if (accounts.length === 0) {
     return json({ success: false, error: 'DNSHE_ACCOUNTS 环境变量未配置' }, 500, cors);
@@ -424,8 +528,8 @@ async function handleAssist(request, env, cors) {
     } catch (e) { console.error('KV write error:', e.message); }
   }
 
-  // 助力结束 → 后台权威刷新兜底（与 DNSHE 完全对齐）
-  refreshCache(env);
+  // 助力结束 → 后台权威刷新兜底（waitUntil 挂在请求上下文，响应返回后任务继续执行）
+  scheduleFullRefresh(env, ctx);
 
   return json({
     success: totalSuccess > 0,
@@ -489,4 +593,18 @@ async function refreshCache(env) {
   } catch (e) {
     console.error('cache refresh error:', e.message);
   }
+}
+
+/**
+ * 调度后台全量刷新。
+ * 关键：Cloudflare 的事件循环在响应返回后会被冻结，未 waitUntil 的后台任务会被终止，
+ * 导致 KV 永远等不到刷新（表现为 create/assist 后只有手动 sync 才更新）。
+ * Pages Functions 的 context.waitUntil 可在响应返回后保持任务继续执行。
+ */
+function scheduleFullRefresh(env, ctx) {
+  const task = refreshCache(env);
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(task);
+  }
+  return task;
 }

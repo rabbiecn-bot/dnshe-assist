@@ -13,7 +13,7 @@
  */
 import worker from '../../src/worker.js';
 
-export async function onRequest({ request, env, next }) {
+export async function onRequest({ request, env, context, next }) {
   const url = new URL(request.url);
 
   // 非 /api/* 路径交给 Pages 静态资源（public/）处理
@@ -21,5 +21,7 @@ export async function onRequest({ request, env, next }) {
     return next();
   }
 
-  return worker.fetch(request, env);
+  // 把 context 传给 worker.fetch，让 create/assist 的后台刷新能用 context.waitUntil
+  // （响应返回后事件循环才会保持，否则后台任务被冻结，KV 永远刷不到权威数据）
+  return worker.fetch(request, env, context);
 }
