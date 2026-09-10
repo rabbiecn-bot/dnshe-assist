@@ -30,6 +30,15 @@ jobs:
           wrangler pages project list 2>/dev/null | grep -q '^dnshe-assist ' || \
             wrangler pages project create dnshe-assist --production-branch=main || true
 
+      - name: Ensure ASSIST_KV namespace & backfill wrangler.toml
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          # 幂等创建 ASSIST_KV（按 title 查找，不存在则创建），并回填 wrangler.toml 中的 namespace id。
+          # 解决换 CF 账号部署时报 "KV namespace not found" 的问题。
+          python3 .github/ensure-kv.py
+
       - name: Set DNSHE_ACCOUNTS secret
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
